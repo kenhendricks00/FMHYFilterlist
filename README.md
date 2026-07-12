@@ -1,6 +1,11 @@
 # FMHY Filterlist
 FMHY Filterlist, Blocks unsafe and optionally also not recommended sites listed in [FMHY unsafe sites](https://fmhy.net/unsafesites).
 
+`filterlist-redirects.json` provides explicit source-to-target aliases for
+FMHY-listed URLs that redirect to a visibly different URL. It is generated
+from `redirect-sources.txt` with `python build_redirects.py` and can be used by
+clients without requesting browser-wide redirect permissions.
+
 > [!NOTE]
 > The "Basic" (recommended to use for inclusion in other blocklists or projects/browsers/etc.. as malicious sites filter, or for non-home network filtering) version blocks only the malicious sites, but the "Plus" (recommended to use for most users) version also blocks not recommended/potentially unsafe sites and apps
 ## How to use (Plus version) <a name="howtouse-plus"></a>
