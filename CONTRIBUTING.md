@@ -6,14 +6,21 @@ Fork the project, add a website in sitelist.txt (or in sitelist-plus.txt if the 
 
 ## Adding a redirect alias
 
-Add the original FMHY-listed URL to `redirect-sources.txt`, then run:
+Run the full-wiki redirect scan:
 
 ```sh
 python build_redirects.py
 python -m unittest discover -s tests -v
 ```
 
-Commit both `redirect-sources.txt` and the generated
-`filterlist-redirects.json`. The generator follows HTTP redirects, preserves
-paths and query strings, removes fragments and unchanged URLs, and fails when
-an input URL is invalid or duplicated.
+Commit the generated `filterlist-redirects.json`. The generator scans resource
+links from FMHY's single-page export, follows HTTP redirects concurrently,
+preserves paths and query strings, and publishes only cross-host aliases. It
+writes URLs that could not be checked to the ignored
+`filterlist-redirect-errors.json` review file.
+
+Same-site changes and known authentication, invite, short-link and tracking
+redirects are excluded from the published alias file.
+
+`redirect-sources.txt` is only for additional FMHY-listed URLs that are not
+discoverable in the wiki export.
