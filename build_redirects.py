@@ -1,4 +1,4 @@
-"""Generate explicit URL aliases by resolving a maintained source list."""
+"""Find cross-host redirect candidates in FMHY's wiki resource links."""
 
 import argparse
 import concurrent.futures
@@ -162,19 +162,22 @@ def hosts_are_equivalent(source_host: str, target_host: str) -> bool:
     )
 
 
-def is_publishable_target(target_url: str) -> bool:
-    """Exclude authentication and standardized invite/short-link handoffs."""
+def is_candidate_redirect(source_url: str, target_url: str) -> bool:
+    """Exclude unsafe downgrades and standardized service handoffs."""
+    source = urlsplit(source_url)
     target = urlsplit(target_url)
     hostname = (target.hostname or "").removeprefix("www.")
-    return hostname not in EXCLUDED_TARGET_HOSTS
+    return not (
+        source.scheme == "https" and target.scheme == "http"
+    ) and hostname not in EXCLUDED_TARGET_HOSTS
 
 
-def generate_aliases(
+def generate_candidates(
     sources: Iterable[str], resolver: Callable[[str], str] | None = None
 ) -> list[dict[str, str]]:
     """Resolve sources into stable, sorted source-to-target alias records."""
     resolver = resolver or resolve_redirect
-    aliases = []
+    candidates = []
     for source in sources:
         normalized_source = normalize_url(source)
         normalized_target = normalize_url(resolver(source))
@@ -183,19 +186,21 @@ def generate_aliases(
         if (
             normalized_source != normalized_target
             and not hosts_are_equivalent(source_host, target_host)
-            and is_publishable_target(normalized_target)
+            and is_candidate_redirect(normalized_source, normalized_target)
         ):
-            aliases.append(
+            candidates.append(
                 {"source": normalized_source, "target": normalized_target}
             )
-    return sorted(aliases, key=lambda alias: (alias["source"], alias["target"]))
+    return sorted(
+        candidates, key=lambda candidate: (candidate["source"], candidate["target"])
+    )
 
 
-def scan_aliases(
+def scan_candidates(
     sources: Iterable[str], resolver: Callable[[str], str], workers: int
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """Resolve URLs concurrently and return successful aliases and failures."""
-    aliases = []
+    candidates = []
     failures = []
     normalized_sources = {}
     for source in sources:
@@ -206,24 +211,61 @@ def scan_aliases(
         for future in concurrent.futures.as_completed(futures):
             source = futures[future]
             try:
-                aliases.extend(generate_aliases([source], resolver=lambda _: future.result()))
+                candidates.extend(
+                    generate_candidates([source], resolver=lambda _: future.result())
+                )
             except (OSError, ValueError) as error:
                 failures.append({"source": normalize_url(source), "error": str(error)})
-    aliases.sort(key=lambda alias: (alias["source"], alias["target"]))
+    candidates.sort(
+        key=lambda candidate: (candidate["source"], candidate["target"])
+    )
     failures.sort(key=lambda failure: failure["source"])
-    return aliases, failures
+    return candidates, failures
+
+
+def load_approved_aliases(path: Path) -> list[dict[str, str]]:
+    """Load the manually reviewed alias file, if present."""
+    if not path.exists():
+        return []
+    aliases = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(aliases, list):
+        raise ValueError(f"Approved alias file must contain a JSON array: {path}")
+    for alias in aliases:
+        if (
+            not isinstance(alias, dict)
+            or set(alias) != {"source", "target"}
+            or not all(isinstance(alias[key], str) for key in ("source", "target"))
+        ):
+            raise ValueError(f"Invalid approved alias record in {path}")
+    return aliases
+
+
+def remove_approved_candidates(
+    candidates: list[dict[str, str]], approved: list[dict[str, str]]
+) -> list[dict[str, str]]:
+    """Hide only exact approved pairs so changed destinations are reviewed."""
+    approved_pairs = {
+        (normalize_url(alias["source"]), normalize_url(alias["target"]))
+        for alias in approved
+    }
+    return [
+        candidate
+        for candidate in candidates
+        if (candidate["source"], candidate["target"]) not in approved_pairs
+    ]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Resolve maintained URLs and generate filterlist-redirects.json."
+        description="Scan FMHY wiki links and generate redirect candidates."
     )
     parser.add_argument("--wiki-url", default=DEFAULT_WIKI_URL)
     parser.add_argument("--extra-sources", default="redirect-sources.txt")
+    parser.add_argument("--approved-file", default="filterlist-redirects.json")
     parser.add_argument(
         "--output",
-        default="filterlist-redirects.json",
-        help="generated JSON output path",
+        default="filterlist-redirect-candidates.json",
+        help="generated candidate JSON output path",
     )
     parser.add_argument(
         "--errors-output",
@@ -239,26 +281,30 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     output_path = Path(args.output)
     errors_path = Path(args.errors_output)
+    approved_path = Path(args.approved_file)
     if args.workers < 1:
         raise ValueError("--workers must be at least 1")
     sources = extract_wiki_urls(fetch_wiki(args.wiki_url))
     extra_path = Path(args.extra_sources)
     if extra_path.exists():
         sources.extend(read_sources(extra_path))
-    aliases, failures = scan_aliases(
+    candidates, failures = scan_candidates(
         sources,
         resolver=lambda source: resolve_redirect(source, timeout=args.timeout),
         workers=args.workers,
     )
+    candidates = remove_approved_candidates(
+        candidates, load_approved_aliases(approved_path)
+    )
     output_path.write_text(
-        json.dumps(aliases, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        json.dumps(candidates, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     errors_path.write_text(
         json.dumps(failures, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     print(
-        f"Checked {len(set(sources))} wiki URLs; generated {len(aliases)} "
-        f"cross-host aliases and reported {len(failures)} failures."
+        f"Checked {len(set(sources))} wiki URLs; generated {len(candidates)} "
+        f"cross-host candidates and reported {len(failures)} failures."
     )
     return 0
 

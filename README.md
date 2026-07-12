@@ -1,13 +1,16 @@
 # FMHY Filterlist
 FMHY Filterlist, Blocks unsafe and optionally also not recommended sites listed in [FMHY unsafe sites](https://fmhy.net/unsafesites).
 
-`filterlist-redirects.json` provides explicit source-to-target aliases for
-FMHY-listed URLs that redirect to a different host. `python build_redirects.py`
-scans resource links throughout FMHY's single-page wiki export, includes any
-manual additions from `redirect-sources.txt`, and writes unreachable URLs to a
-local error report. Same-site changes and standardized authentication, invite,
-short-link and tracking redirects are excluded. Clients can use the generated
-aliases without requesting browser-wide redirect permissions.
+`filterlist-redirects.json` contains manually approved source-to-target aliases
+for FMHY-listed URLs. `python build_redirects.py` scans resource links throughout
+FMHY's single-page wiki export and writes possible cross-host changes to
+`filterlist-redirect-candidates.json` for human review. It includes any manual
+additions from `redirect-sources.txt` and writes unreachable URLs to a local
+error report. Same-site changes, HTTPS downgrades, and standardized
+authentication, invite, short-link and tracking redirects are excluded.
+Exact pairs already present in the approved file are also omitted from the
+candidate report; changed destinations reappear for review. Consumers should
+use only the approved alias file.
 
 > [!NOTE]
 > The "Basic" (recommended to use for inclusion in other blocklists or projects/browsers/etc.. as malicious sites filter, or for non-home network filtering) version blocks only the malicious sites, but the "Plus" (recommended to use for most users) version also blocks not recommended/potentially unsafe sites and apps

@@ -7,6 +7,9 @@ from unittest.mock import patch
 import build_redirects
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
 class BuildRedirectsTests(unittest.TestCase):
     def test_normalize_url_preserves_paths_and_removes_fragments(self):
         self.assertEqual(
@@ -40,7 +43,7 @@ class BuildRedirectsTests(unittest.TestCase):
             ["https://mirror.example/", "https://old.example/path"],
         )
 
-    def test_generate_aliases_omits_unchanged_urls_and_sorts_results(self):
+    def test_generate_candidates_omits_unchanged_urls_and_sorts_results(self):
         sources = [
             "https://second.example/old",
             "https://same.example/",
@@ -52,12 +55,12 @@ class BuildRedirectsTests(unittest.TestCase):
             sources[2]: "https://destination.example/one",
         }
 
-        aliases = build_redirects.generate_aliases(
+        candidates = build_redirects.generate_candidates(
             sources, resolver=destinations.__getitem__
         )
 
         self.assertEqual(
-            aliases,
+            candidates,
             [
                 {
                     "source": "https://first.example/old",
@@ -70,7 +73,7 @@ class BuildRedirectsTests(unittest.TestCase):
             ],
         )
 
-    def test_generate_aliases_omits_same_site_and_known_service_redirects(self):
+    def test_generate_candidates_omits_same_site_and_known_service_redirects(self):
         destinations = {
             "https://app.example.com": "https://login.example.com/sign-in",
             "https://discord.gg/example": "https://discord.com/invite/example",
@@ -79,26 +82,70 @@ class BuildRedirectsTests(unittest.TestCase):
         }
 
         self.assertEqual(
-            build_redirects.generate_aliases(
+            build_redirects.generate_candidates(
                 destinations, resolver=destinations.__getitem__
             ),
             [],
         )
 
-    def test_scan_aliases_keeps_successes_and_reports_failures(self):
+    def test_generate_candidates_omits_https_to_http_downgrades(self):
+        self.assertEqual(
+            build_redirects.generate_candidates(
+                ["https://secure.example/resource"],
+                resolver=lambda _: "http://different.example/resource",
+            ),
+            [],
+        )
+
+    def test_published_aliases_contain_only_manually_approved_pairs(self):
+        aliases = json.loads(
+            (REPOSITORY_ROOT / "filterlist-redirects.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(
+            aliases,
+            [
+                {
+                    "source": "https://alienflix.net",
+                    "target": "https://hdtodayz.net",
+                }
+            ],
+        )
+
+    def test_approved_exact_pairs_are_removed_from_candidates(self):
+        candidates = [
+            {"source": "https://old.example", "target": "https://new.example"},
+            {"source": "https://changed.example", "target": "https://newer.example"},
+        ]
+        approved = [
+            {"source": "https://old.example", "target": "https://new.example"},
+            {"source": "https://changed.example", "target": "https://previous.example"},
+        ]
+
+        self.assertEqual(
+            build_redirects.remove_approved_candidates(candidates, approved),
+            [
+                {
+                    "source": "https://changed.example",
+                    "target": "https://newer.example",
+                }
+            ],
+        )
+
+    def test_scan_candidates_keeps_successes_and_reports_failures(self):
         def resolver(source):
             if "broken" in source:
                 raise OSError("connection failed")
             return "https://new.example/path"
 
-        aliases, failures = build_redirects.scan_aliases(
+        candidates, failures = build_redirects.scan_candidates(
             ["https://old.example", "https://broken.example"],
             resolver=resolver,
             workers=2,
         )
 
         self.assertEqual(
-            aliases,
+            candidates,
             [{"source": "https://old.example", "target": "https://new.example/path"}],
         )
         self.assertEqual(
@@ -106,10 +153,10 @@ class BuildRedirectsTests(unittest.TestCase):
             [{"source": "https://broken.example", "error": "connection failed"}],
         )
 
-    def test_main_writes_generated_json_from_wiki_export(self):
+    def test_main_writes_candidate_json_from_wiki_export(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            output_file = root / "filterlist-redirects.json"
+            output_file = root / "filterlist-redirect-candidates.json"
             errors_file = root / "filterlist-redirect-errors.json"
 
             with patch.object(build_redirects, "fetch_wiki", return_value=(
@@ -121,6 +168,7 @@ class BuildRedirectsTests(unittest.TestCase):
                     [
                         "--output", str(output_file),
                         "--errors-output", str(errors_file),
+                        "--approved-file", str(root / "missing-approved.json"),
                         "--workers", "1",
                     ]
                 )
